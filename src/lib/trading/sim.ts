@@ -58,10 +58,16 @@ interface SymbolSim {
   shockUntil: number;
 }
 
+interface SimFill {
+  price: number;
+  time: number;
+}
+
 export class SimBroker implements Broker {
   readonly mode: BotMode = "demo";
   private sims = new Map<string, SymbolSim>();
   private positions = new Map<string, SimPosition>();
+  private lastExitFills = new Map<string, SimFill>();
   private cash = STARTING_CASH;
   private dayStartEquity = STARTING_CASH;
   private dayKey = "";
@@ -159,9 +165,11 @@ export class SimBroker implements Broker {
     if (bar.l <= pos.stopLoss) {
       this.cash += pos.qty * pos.stopLoss;
       this.positions.delete(symbol);
+      this.lastExitFills.set(symbol, { price: pos.stopLoss, time: bar.t });
     } else if (bar.h >= pos.takeProfit) {
       this.cash += pos.qty * pos.takeProfit;
       this.positions.delete(symbol);
+      this.lastExitFills.set(symbol, { price: pos.takeProfit, time: bar.t });
     }
   }
 
@@ -242,8 +250,16 @@ export class SimBroker implements Broker {
     this.advance();
     const pos = this.positions.get(symbol);
     if (!pos) return;
-    this.cash += pos.qty * this.lastPrice(symbol);
+    const price = this.lastPrice(symbol);
+    this.cash += pos.qty * price;
     this.positions.delete(symbol);
+    this.lastExitFills.set(symbol, { price, time: Date.now() });
+  }
+
+  async getLastExitFill(
+    symbol: string
+  ): Promise<{ price: number; time: number } | null> {
+    return this.lastExitFills.get(symbol) ?? null;
   }
 
   async closeAllPositions(): Promise<void> {

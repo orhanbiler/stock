@@ -206,6 +206,32 @@ export class AlpacaBroker implements Broker {
     });
   }
 
+  async getLastExitFill(
+    symbol: string
+  ): Promise<{ price: number; time: number } | null> {
+    const params = new URLSearchParams({
+      status: "closed",
+      symbols: symbol,
+      limit: "10",
+      direction: "desc",
+    });
+    const orders = await this.request<
+      Array<{
+        side: string;
+        filled_avg_price: string | null;
+        filled_at: string | null;
+      }>
+    >(this.tradingBase, `/v2/orders?${params}`);
+    const fill = orders.find(
+      (o) => o.side === "sell" && o.filled_avg_price && o.filled_at
+    );
+    if (!fill) return null;
+    return {
+      price: parseFloat(fill.filled_avg_price as string),
+      time: Date.parse(fill.filled_at as string),
+    };
+  }
+
   async closePosition(symbol: string): Promise<void> {
     const res = await this.fetchWithRetry(
       this.tradingBase,

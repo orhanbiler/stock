@@ -77,6 +77,12 @@ const FIELDS: Array<{
     hint: "Skip setups paying less than this ratio",
     step: 0.1,
   },
+  {
+    key: "maxConsecutiveLosses",
+    label: "Loss streak stop",
+    hint: "Consecutive losses before no new entries today",
+    step: 1,
+  },
 ];
 
 export function RiskPanel({

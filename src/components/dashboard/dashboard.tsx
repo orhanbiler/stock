@@ -9,6 +9,7 @@ import type { RiskConfig, StatusPayload } from "@/lib/trading/types";
 
 import { DebugPanel } from "./debug-panel";
 import { EquityChart } from "./equity-chart";
+import { JournalPanel } from "./journal-panel";
 import { Header } from "./header";
 import { Positions } from "./positions";
 import { RiskPanel } from "./risk-panel";
@@ -123,11 +124,15 @@ export function Dashboard() {
         </div>
       </div>
 
-      <Tabs defaultValue="risk">
+      <Tabs defaultValue="journal">
         <TabsList>
+          <TabsTrigger value="journal">Journal</TabsTrigger>
           <TabsTrigger value="risk">Risk settings</TabsTrigger>
           <TabsTrigger value="strategy">Strategy</TabsTrigger>
         </TabsList>
+        <TabsContent value="journal">
+          <JournalPanel />
+        </TabsContent>
         <TabsContent value="risk">
           <RiskPanel config={status.config} onSaved={onConfigSaved} />
         </TabsContent>

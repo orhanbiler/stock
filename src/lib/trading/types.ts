@@ -69,6 +69,59 @@ export interface RiskConfig {
   rsiEntryMax: number;
   stopAtrMultiple: number;
   minRewardRisk: number;
+  maxConsecutiveLosses: number;
+}
+
+export type ExitReason = "target" | "stop" | "eod" | "manual" | "halt";
+
+export interface JournalTrade {
+  id: string;
+  mode: BotMode;
+  dayKey: string;
+  symbol: string;
+  qty: number;
+  entryTime: number;
+  entryPrice: number;
+  takeProfit: number;
+  stopLoss: number;
+  deviationAtr: number;
+  rsi2: number;
+  status: "open" | "closed";
+  exitTime?: number;
+  exitPrice?: number;
+  exitReason?: ExitReason;
+  pnl?: number;
+  pnlPct?: number;
+  holdMinutes?: number;
+}
+
+export interface JournalDay {
+  dayKey: string;
+  trades: number;
+  wins: number;
+  losses: number;
+  pnl: number;
+}
+
+export interface JournalStats {
+  totalTrades: number;
+  openTrades: number;
+  wins: number;
+  losses: number;
+  winRate: number | null;
+  totalPnl: number;
+  avgWin: number | null;
+  avgLoss: number | null;
+  profitFactor: number | null;
+  bestTrade: number | null;
+  worstTrade: number | null;
+  avgHoldMinutes: number | null;
+  days: JournalDay[];
+}
+
+export interface JournalPayload {
+  trades: JournalTrade[];
+  stats: JournalStats;
 }
 
 export interface EquityPoint {
@@ -120,4 +173,8 @@ export interface Broker {
   submitBracketBuy(req: BracketOrderRequest): Promise<void>;
   closePosition(symbol: string): Promise<void>;
   closeAllPositions(): Promise<void>;
+  /** Actual fill of the most recent closing (sell) order, if known. */
+  getLastExitFill(
+    symbol: string
+  ): Promise<{ price: number; time: number } | null>;
 }

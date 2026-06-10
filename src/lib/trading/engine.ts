@@ -9,10 +9,12 @@ import {
   FLATTEN_MINUTES,
   MAX_EQUITY_POINTS,
   MAX_LOG_ENTRIES,
+  MAX_SYMBOL_ENTRIES_PER_DAY,
   sanitizeSymbols,
   SYMBOL_COOLDOWN_MINUTES,
   TICK_INTERVAL_MS,
 } from "./config";
+import { TradeJournal } from "./journal";
 import { SimBroker } from "./sim";
 import { pushConfigured, sendPush } from "./notify";
 import { readJson, writeJson } from "./store";
@@ -22,6 +24,8 @@ import type {
   BotState,
   Broker,
   DebugInfo,
+  ExitReason,
+  JournalPayload,
   Position,
   RiskConfig,
   StatusPayload,
@@ -87,6 +91,10 @@ class TradingEngine {
   private endpoint: string;
   private dataFeed: string;
   private symbols: string[];
+  private journal = new TradeJournal();
+  /** Set when the engine itself closes everything, so the next exit
+   *  detection can attribute the reason correctly. */
+  private pendingExitReason: ExitReason | null = null;
 
   constructor() {
     const creds = getAlpacaCreds();
@@ -159,6 +167,10 @@ class TradingEngine {
     return this.broker.mode;
   }
 
+  getJournal(): JournalPayload {
+    return this.journal.payload();
+  }
+
   isRunning(): boolean {
     return this.state.running;
   }
@@ -213,6 +225,7 @@ class TradingEngine {
   async flattenAll(reason: string): Promise<void> {
     if (this.positions.length === 0) return;
     this.trace(`manual flatten: closing ${this.positions.length} position(s)`);
+    this.pendingExitReason = "manual";
     await this.broker.closeAllPositions();
     this.log("system", "sell", 0, 0, reason);
     await this.refreshPortfolio();
@@ -262,7 +275,7 @@ class TradingEngine {
       this.rollDayIfNeeded();
       this.state.marketOpen = await this.broker.isMarketOpen();
       await this.refreshPortfolio();
-      this.detectExits();
+      await this.detectExits();
       this.enforceCircuitBreakers();
       await this.endOfDayFlatten();
       await this.refreshWatchlist();
@@ -299,8 +312,11 @@ class TradingEngine {
     this.state.tradesToday = 0;
     this.state.realizedPnlToday = 0;
     this.state.startEquityToday = 0;
-    if (this.state.haltedReason?.startsWith("Daily loss limit")) {
-      this.state.haltedReason = null; // fresh day, fresh limit
+    if (
+      this.state.haltedReason?.startsWith("Daily loss limit") ||
+      this.state.haltedReason?.startsWith("Discipline stop")
+    ) {
+      this.state.haltedReason = null; // fresh day, fresh limits
     }
     this.cooldownUntil.clear();
   }
@@ -317,14 +333,27 @@ class TradingEngine {
     }
   }
 
-  /** A position that vanished since last tick was closed by its bracket. */
-  private detectExits() {
+  /** A position that vanished since last tick was closed by its bracket
+   *  (or by one of our flatten paths). Journal it with the real fill. */
+  private async detectExits() {
     const current = new Set(this.positions.map((p) => p.symbol));
-    for (const [symbol, prev] of this.lastPositions) {
-      if (current.has(symbol)) continue;
+    const vanished = [...this.lastPositions].filter(
+      ([symbol]) => !current.has(symbol)
+    );
+    const flattenReason = this.pendingExitReason;
+    if (vanished.length > 0) this.pendingExitReason = null;
+
+    for (const [symbol, prev] of vanished) {
+      // Prefer the broker's actual fill over a bar-close estimate.
+      const fill = await this.broker.getLastExitFill(symbol).catch(() => null);
       const snap = this.state.watchlist.find((w) => w.symbol === symbol);
-      const exitPrice = snap?.price ?? prev.currentPrice;
+      const exitPrice = fill?.price ?? snap?.price ?? prev.currentPrice;
+      const exitTime = fill?.time ?? Date.now();
       const pnl = round2((exitPrice - prev.avgEntry) * prev.qty);
+      const reason: ExitReason =
+        flattenReason ?? (pnl >= 0 ? "target" : "stop");
+
+      this.journal.close(symbol, exitPrice, exitTime, reason);
       this.state.realizedPnlToday = round2(
         this.state.realizedPnlToday + pnl
       );
@@ -341,15 +370,33 @@ class TradingEngine {
         pnl
       );
       this.trace(
-        `exit detected: ${symbol} ${prev.qty} @ ~$${exitPrice.toFixed(2)} pnl≈$${pnl.toFixed(2)} — cooldown ${SYMBOL_COOLDOWN_MINUTES}m`
+        `exit: ${symbol} ${prev.qty} @ $${exitPrice.toFixed(2)} (${reason}${fill ? ", real fill" : ", estimated"}) pnl=$${pnl.toFixed(2)}`
       );
       sendPush(
         `${symbol} closed: ${pnl >= 0 ? "+" : ""}$${pnl.toFixed(2)}`,
-        `${prev.qty} @ ~$${exitPrice.toFixed(2)} (${pnl >= 0 ? "take-profit" : "stop-loss"}) · day realized ${this.state.realizedPnlToday >= 0 ? "+" : ""}$${this.state.realizedPnlToday.toFixed(2)}`,
+        `${prev.qty} @ $${exitPrice.toFixed(2)} (${reason}) · day realized ${this.state.realizedPnlToday >= 0 ? "+" : ""}$${this.state.realizedPnlToday.toFixed(2)}`,
         { tags: pnl >= 0 ? "white_check_mark" : "small_red_triangle_down" }
       );
     }
     this.lastPositions = new Map(this.positions.map((p) => [p.symbol, p]));
+    if (vanished.length > 0) this.enforceLossStreakBrake();
+  }
+
+  /** Discipline stop: N consecutive losses → no new entries today.
+   *  Unlike the circuit breaker this does not flatten — existing
+   *  positions keep their brackets and finish on their own terms. */
+  private enforceLossStreakBrake() {
+    if (this.state.haltedReason) return;
+    const streak = this.journal.consecutiveLosses(this.dayKey);
+    if (streak >= this.config.maxConsecutiveLosses) {
+      this.state.haltedReason = `Discipline stop: ${streak} consecutive losses — no new entries until tomorrow`;
+      this.trace(`DISCIPLINE STOP: ${streak} consecutive losses`);
+      this.log("system", "sell", 0, 0, this.state.haltedReason);
+      sendPush("Discipline stop", this.state.haltedReason, {
+        priority: "high",
+        tags: "hand",
+      });
+    }
   }
 
   /** The non-negotiable daily loss circuit breaker. */
@@ -361,6 +408,7 @@ class TradingEngine {
     if (dayLossPct <= -this.config.dailyLossLimitPct) {
       this.state.haltedReason = `Daily loss limit hit (${dayLossPct.toFixed(2)}%) — trading halted until tomorrow`;
       this.state.running = false;
+      this.pendingExitReason = "halt";
       void this.broker.closeAllPositions();
       this.log("system", "sell", 0, 0, this.state.haltedReason);
       this.trace(`CIRCUIT BREAKER: ${this.state.haltedReason}`);
@@ -379,6 +427,7 @@ class TradingEngine {
       minutes >= FLATTEN_MINUTES &&
       this.positions.length > 0
     ) {
+      this.pendingExitReason = "eod";
       await this.broker.closeAllPositions();
       this.log("system", "sell", 0, 0, "End of day — flattened all positions");
       this.trace("end-of-day flatten executed (15:55 ET)");
@@ -457,6 +506,15 @@ class TradingEngine {
         );
         continue;
       }
+      if (
+        this.journal.entriesToday(snap.symbol, this.dayKey) >=
+        MAX_SYMBOL_ENTRIES_PER_DAY
+      ) {
+        this.trace(
+          `skip ${snap.symbol}: already attempted ${MAX_SYMBOL_ENTRIES_PER_DAY}x today`
+        );
+        continue;
+      }
 
       const stopLoss = round2(
         snap.price - this.config.stopAtrMultiple * snap.atr
@@ -493,6 +551,18 @@ class TradingEngine {
           qty,
           takeProfit,
           stopLoss,
+        });
+        this.journal.open({
+          mode: this.broker.mode,
+          dayKey: this.dayKey,
+          symbol: snap.symbol,
+          qty,
+          entryTime: Date.now(),
+          entryPrice: round2(snap.price),
+          takeProfit,
+          stopLoss,
+          deviationAtr: round2(snap.deviationAtr),
+          rsi2: round2(snap.rsi2),
         });
         this.state.tradesToday += 1;
         openCount += 1;

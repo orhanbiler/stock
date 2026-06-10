@@ -49,7 +49,11 @@ export const DEFAULT_RISK_CONFIG: RiskConfig = {
   rsiEntryMax: 10,
   stopAtrMultiple: 1.0,
   minRewardRisk: 1.2,
+  maxConsecutiveLosses: 3,
 };
+
+/** Hard cap on entries per symbol per day — never feed a falling knife. */
+export const MAX_SYMBOL_ENTRIES_PER_DAY = 2;
 
 /** Entry window (ET): skip the chaotic open and the closing auction ramp. */
 export const ENTRY_START_MINUTES = 9 * 60 + 45; // 9:45 AM ET
@@ -79,5 +83,8 @@ export function clampRiskConfig(c: RiskConfig): RiskConfig {
     rsiEntryMax: clamp(c.rsiEntryMax, 1, 40, d.rsiEntryMax),
     stopAtrMultiple: clamp(c.stopAtrMultiple, 0.5, 3, d.stopAtrMultiple),
     minRewardRisk: clamp(c.minRewardRisk, 0.5, 5, d.minRewardRisk),
+    maxConsecutiveLosses: Math.round(
+      clamp(c.maxConsecutiveLosses, 2, 10, d.maxConsecutiveLosses)
+    ),
   };
 }
