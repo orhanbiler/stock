@@ -1,0 +1,111 @@
+export type BotMode = "demo" | "paper" | "live";
+
+export interface Bar {
+  t: number; // epoch ms
+  o: number;
+  h: number;
+  l: number;
+  c: number;
+  v: number;
+}
+
+export interface AccountInfo {
+  equity: number;
+  cash: number;
+  buyingPower: number;
+  dayPnl: number;
+  dayPnlPct: number;
+}
+
+export interface Position {
+  symbol: string;
+  qty: number;
+  avgEntry: number;
+  currentPrice: number;
+  marketValue: number;
+  unrealizedPnl: number;
+  unrealizedPnlPct: number;
+}
+
+export interface BracketOrderRequest {
+  symbol: string;
+  qty: number;
+  takeProfit: number;
+  stopLoss: number;
+}
+
+export interface TradeLogEntry {
+  id: string;
+  time: number;
+  symbol: string;
+  side: "buy" | "sell";
+  qty: number;
+  price: number;
+  reason: string;
+  pnl?: number;
+}
+
+export type Signal = "long" | "none" | "blocked";
+
+export interface SymbolSnapshot {
+  symbol: string;
+  price: number;
+  vwap: number;
+  rsi2: number;
+  atr: number;
+  deviationAtr: number;
+  signal: Signal;
+  note: string;
+  updatedAt: number;
+}
+
+export interface RiskConfig {
+  riskPerTradePct: number;
+  maxPositionPct: number;
+  maxOpenPositions: number;
+  maxTradesPerDay: number;
+  dailyLossLimitPct: number;
+  entryDeviationAtr: number;
+  rsiEntryMax: number;
+  stopAtrMultiple: number;
+  minRewardRisk: number;
+}
+
+export interface EquityPoint {
+  t: number;
+  equity: number;
+}
+
+export interface BotState {
+  running: boolean;
+  mode: BotMode;
+  marketOpen: boolean;
+  haltedReason: string | null;
+  lastError: string | null;
+  tradesToday: number;
+  realizedPnlToday: number;
+  startEquityToday: number;
+  lastTick: number | null;
+  watchlist: SymbolSnapshot[];
+  log: TradeLogEntry[];
+  equityCurve: EquityPoint[];
+}
+
+export interface StatusPayload {
+  account: AccountInfo;
+  positions: Position[];
+  bot: BotState;
+  symbols: string[];
+  config: RiskConfig;
+}
+
+export interface Broker {
+  readonly mode: BotMode;
+  getAccount(): Promise<AccountInfo>;
+  getPositions(): Promise<Position[]>;
+  getBars(symbol: string, lookbackMinutes: number): Promise<Bar[]>;
+  isMarketOpen(): Promise<boolean>;
+  submitBracketBuy(req: BracketOrderRequest): Promise<void>;
+  closePosition(symbol: string): Promise<void>;
+  closeAllPositions(): Promise<void>;
+}
