@@ -91,12 +91,23 @@ export interface BotState {
   equityCurve: EquityPoint[];
 }
 
+export interface DebugInfo {
+  keysDetected: boolean;
+  endpoint: string;
+  dataFeed: string;
+  tickCount: number;
+  lastTickDurationMs: number;
+  entriesBlockedReason: string | null;
+  trace: string[];
+}
+
 export interface StatusPayload {
   account: AccountInfo;
   positions: Position[];
   bot: BotState;
   symbols: string[];
   config: RiskConfig;
+  debug: DebugInfo;
 }
 
 export interface Broker {

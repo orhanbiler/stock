@@ -7,6 +7,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { RiskConfig, StatusPayload } from "@/lib/trading/types";
 
+import { DebugPanel } from "./debug-panel";
 import { EquityChart } from "./equity-chart";
 import { Header } from "./header";
 import { Positions } from "./positions";
@@ -129,6 +130,8 @@ export function Dashboard() {
           <StrategyExplainer />
         </TabsContent>
       </Tabs>
+
+      <DebugPanel status={status} />
 
       <p className="text-muted-foreground pb-2 text-center text-xs">
         Educational software. Markets carry risk — no strategy guarantees

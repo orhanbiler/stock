@@ -19,11 +19,14 @@ import type {
   AccountInfo,
   BotState,
   Broker,
+  DebugInfo,
   Position,
   RiskConfig,
   StatusPayload,
   TradeLogEntry,
 } from "./types";
+
+const MAX_TRACE_LINES = 150;
 
 const STATE_FILE = "bot-state.json";
 const CONFIG_FILE = "risk-config.json";
@@ -74,10 +77,28 @@ class TradingEngine {
     dayPnlPct: 0,
   };
   private positions: Position[] = [];
+  private traceBuf: string[] = [];
+  private tickCount = 0;
+  private lastTickDurationMs = 0;
+  private keysDetected: boolean;
+  private endpoint: string;
+  private dataFeed: string;
 
   constructor() {
     const creds = getAlpacaCreds();
     this.broker = creds ? new AlpacaBroker(creds) : new SimBroker();
+    this.keysDetected = creds !== null;
+    this.endpoint = creds
+      ? creds.live
+        ? "https://api.alpaca.markets"
+        : "https://paper-api.alpaca.markets"
+      : "built-in simulator";
+    this.dataFeed = creds
+      ? "Alpaca IEX 1-min bars"
+      : "synthetic 1-min random walk";
+    this.trace(
+      `engine boot — mode=${this.broker.mode}, keys ${creds ? "detected" : "absent"}, endpoint=${this.endpoint}`
+    );
 
     this.config = clampRiskConfig(
       readJson<RiskConfig>(CONFIG_FILE) ?? DEFAULT_RISK_CONFIG
@@ -103,6 +124,17 @@ class TradingEngine {
     };
   }
 
+  private trace(msg: string) {
+    const ts = new Date().toLocaleTimeString("en-US", {
+      hour12: false,
+      timeZone: "America/New_York",
+    });
+    this.traceBuf.unshift(`[${ts} ET] ${msg}`);
+    if (this.traceBuf.length > MAX_TRACE_LINES) {
+      this.traceBuf.length = MAX_TRACE_LINES;
+    }
+  }
+
   getConfig(): RiskConfig {
     return this.config;
   }
@@ -118,6 +150,7 @@ class TradingEngine {
     this.state.running = true;
     this.state.haltedReason = null;
     this.log("system", "buy", 0, 0, "Bot started — entries enabled");
+    this.trace("bot started by user");
     if (!this.timer) {
       this.timer = setInterval(() => {
         void this.tick();
@@ -130,11 +163,13 @@ class TradingEngine {
     if (!this.state.running) return;
     this.state.running = false;
     this.log("system", "sell", 0, 0, "Bot stopped — no new entries");
+    this.trace("bot stopped by user");
     this.persist();
   }
 
   async flattenAll(reason: string): Promise<void> {
     if (this.positions.length === 0) return;
+    this.trace(`manual flatten: closing ${this.positions.length} position(s)`);
     await this.broker.closeAllPositions();
     this.log("system", "sell", 0, 0, reason);
     await this.refreshPortfolio();
@@ -151,18 +186,30 @@ class TradingEngine {
 
   async getStatus(): Promise<StatusPayload> {
     await this.tickIfStale();
+    const debug: DebugInfo = {
+      keysDetected: this.keysDetected,
+      endpoint: this.endpoint,
+      dataFeed: this.dataFeed,
+      tickCount: this.tickCount,
+      lastTickDurationMs: this.lastTickDurationMs,
+      entriesBlockedReason: this.entriesAllowed(),
+      trace: [...this.traceBuf],
+    };
     return {
       account: this.account,
       positions: this.positions,
       bot: this.state,
       symbols: [...SYMBOLS],
       config: this.config,
+      debug,
     };
   }
 
   private async tick(): Promise<void> {
     if (this.ticking) return;
     this.ticking = true;
+    const t0 = Date.now();
+    this.tickCount += 1;
     try {
       this.rollDayIfNeeded();
       this.state.marketOpen = await this.broker.isMarketOpen();
@@ -174,9 +221,23 @@ class TradingEngine {
       await this.maybeEnter();
       this.recordEquity();
       this.state.lastError = null;
+      const signals = this.state.watchlist
+        .filter((w) => w.signal === "long")
+        .map((w) => w.symbol);
+      const held = this.positions.map((p) => p.symbol);
+      const blocked = this.entriesAllowed();
+      this.trace(
+        `tick #${this.tickCount}: market=${this.state.marketOpen ? "open" : "closed"} ` +
+          `equity=$${this.account.equity.toFixed(0)} ` +
+          `positions=${held.length ? held.join(",") : "none"} ` +
+          `signals=${signals.length ? signals.join(",") : "none"} ` +
+          `entries=${blocked ?? "ALLOWED"}`
+      );
     } catch (err) {
       this.state.lastError = err instanceof Error ? err.message : String(err);
+      this.trace(`ERROR tick #${this.tickCount}: ${this.state.lastError}`);
     } finally {
+      this.lastTickDurationMs = Date.now() - t0;
       this.state.lastTick = Date.now();
       this.persist();
       this.ticking = false;
@@ -231,6 +292,9 @@ class TradingEngine {
         pnl >= 0 ? "Take-profit / exit filled" : "Stop-loss filled",
         pnl
       );
+      this.trace(
+        `exit detected: ${symbol} ${prev.qty} @ ~$${exitPrice.toFixed(2)} pnl≈$${pnl.toFixed(2)} — cooldown ${SYMBOL_COOLDOWN_MINUTES}m`
+      );
     }
     this.lastPositions = new Map(this.positions.map((p) => [p.symbol, p]));
   }
@@ -246,6 +310,7 @@ class TradingEngine {
       this.state.running = false;
       void this.broker.closeAllPositions();
       this.log("system", "sell", 0, 0, this.state.haltedReason);
+      this.trace(`CIRCUIT BREAKER: ${this.state.haltedReason}`);
     }
   }
 
@@ -259,6 +324,7 @@ class TradingEngine {
     ) {
       await this.broker.closeAllPositions();
       this.log("system", "sell", 0, 0, "End of day — flattened all positions");
+      this.trace("end-of-day flatten executed (15:55 ET)");
     }
   }
 
@@ -311,11 +377,24 @@ class TradingEngine {
 
     for (const snap of this.state.watchlist) {
       if (snap.signal !== "long") continue;
-      if (openCount >= this.config.maxOpenPositions) break;
+      if (openCount >= this.config.maxOpenPositions) {
+        this.trace(
+          `skip ${snap.symbol}: max open positions (${this.config.maxOpenPositions}) reached`
+        );
+        break;
+      }
       if (this.state.tradesToday >= this.config.maxTradesPerDay) break;
-      if (held.has(snap.symbol)) continue;
+      if (held.has(snap.symbol)) {
+        this.trace(`skip ${snap.symbol}: already holding`);
+        continue;
+      }
       const cooldown = this.cooldownUntil.get(snap.symbol);
-      if (cooldown && Date.now() < cooldown) continue;
+      if (cooldown && Date.now() < cooldown) {
+        this.trace(
+          `skip ${snap.symbol}: cooldown ${Math.ceil((cooldown - Date.now()) / 60_000)}m remaining`
+        );
+        continue;
+      }
 
       const stopLoss = round2(
         snap.price - this.config.stopAtrMultiple * snap.atr
@@ -336,9 +415,17 @@ class TradingEngine {
           this.account.buyingPower / snap.price
         )
       );
-      if (qty < 1) continue;
+      if (qty < 1) {
+        this.trace(
+          `skip ${snap.symbol}: sized to 0 shares (risk budget $${riskBudget.toFixed(0)}, $${riskPerShare.toFixed(2)}/share risk)`
+        );
+        continue;
+      }
 
       try {
+        this.trace(
+          `ENTRY ${snap.symbol}: buy ${qty} @ ~$${snap.price.toFixed(2)} tp=$${takeProfit.toFixed(2)} sl=$${stopLoss.toFixed(2)} (${snap.note})`
+        );
         await this.broker.submitBracketBuy({
           symbol: snap.symbol,
           qty,
@@ -358,6 +445,7 @@ class TradingEngine {
       } catch (err) {
         this.state.lastError =
           err instanceof Error ? err.message : String(err);
+        this.trace(`ERROR order ${snap.symbol}: ${this.state.lastError}`);
       }
     }
   }
