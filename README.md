@@ -130,3 +130,21 @@ docker run -d -p 3000:3000 \
 `/api/health` is a lightweight liveness probe (no market calls). The
 dashboard works the same wherever it runs — open it to watch, close it
 without stopping the bot.
+
+## Phone notifications (native push)
+
+The bot can push every trade event to your phone — entries (with bracket
+levels), exits (with P&L), the daily circuit breaker, and the end-of-day
+flatten.
+
+**ntfy (free, recommended):**
+
+1. Install **ntfy** from the App Store / Play Store.
+2. In the app, subscribe to a topic with an unguessable name, e.g.
+   `quantdesk-x7k2-9fq1` (topics are public — obscurity is the password).
+3. Set `NTFY_TOPIC=quantdesk-x7k2-9fq1` on your host and redeploy.
+
+**Pushover** ($5 one-time): set `PUSHOVER_TOKEN` and `PUSHOVER_USER`.
+
+The debug panel shows "Push alerts: configured" when either is active.
+Notification failures never block trading.

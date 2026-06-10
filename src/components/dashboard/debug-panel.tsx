@@ -89,6 +89,16 @@ export function DebugPanel({ status }: { status: StatusPayload }) {
                 )
               }
             />
+            <Field
+              label="Push alerts"
+              value={
+                debug.pushConfigured ? (
+                  <span className="text-gain">configured</span>
+                ) : (
+                  <span className="text-muted-foreground">off</span>
+                )
+              }
+            />
             <Field label="Endpoint" value={debug.endpoint} />
             <Field label="Data feed" value={debug.dataFeed} />
             <Field

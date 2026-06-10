@@ -14,6 +14,7 @@ import {
   TICK_INTERVAL_MS,
 } from "./config";
 import { SimBroker } from "./sim";
+import { pushConfigured, sendPush } from "./notify";
 import { readJson, writeJson } from "./store";
 import { evaluateSymbol, round2, targetFor } from "./strategy";
 import type {
@@ -234,6 +235,7 @@ class TradingEngine {
     await this.tickIfStale();
     const debug: DebugInfo = {
       keysDetected: this.keysDetected,
+      pushConfigured: pushConfigured(),
       endpoint: this.endpoint,
       dataFeed: this.dataFeed,
       tickCount: this.tickCount,
@@ -341,6 +343,11 @@ class TradingEngine {
       this.trace(
         `exit detected: ${symbol} ${prev.qty} @ ~$${exitPrice.toFixed(2)} pnl≈$${pnl.toFixed(2)} — cooldown ${SYMBOL_COOLDOWN_MINUTES}m`
       );
+      sendPush(
+        `${symbol} closed: ${pnl >= 0 ? "+" : ""}$${pnl.toFixed(2)}`,
+        `${prev.qty} @ ~$${exitPrice.toFixed(2)} (${pnl >= 0 ? "take-profit" : "stop-loss"}) · day realized ${this.state.realizedPnlToday >= 0 ? "+" : ""}$${this.state.realizedPnlToday.toFixed(2)}`,
+        { tags: pnl >= 0 ? "white_check_mark" : "small_red_triangle_down" }
+      );
     }
     this.lastPositions = new Map(this.positions.map((p) => [p.symbol, p]));
   }
@@ -357,6 +364,10 @@ class TradingEngine {
       void this.broker.closeAllPositions();
       this.log("system", "sell", 0, 0, this.state.haltedReason);
       this.trace(`CIRCUIT BREAKER: ${this.state.haltedReason}`);
+      sendPush("Circuit breaker tripped", this.state.haltedReason, {
+        priority: "high",
+        tags: "rotating_light",
+      });
     }
   }
 
@@ -371,6 +382,11 @@ class TradingEngine {
       await this.broker.closeAllPositions();
       this.log("system", "sell", 0, 0, "End of day — flattened all positions");
       this.trace("end-of-day flatten executed (15:55 ET)");
+      sendPush(
+        "End of day flatten",
+        `All positions closed · day realized ${this.state.realizedPnlToday >= 0 ? "+" : ""}$${this.state.realizedPnlToday.toFixed(2)}`,
+        { tags: "checkered_flag" }
+      );
     }
   }
 
@@ -487,6 +503,11 @@ class TradingEngine {
           qty,
           snap.price,
           `${snap.note} → target ${takeProfit.toFixed(2)}, stop ${stopLoss.toFixed(2)}`
+        );
+        sendPush(
+          `Bought ${qty} ${snap.symbol} @ ~$${snap.price.toFixed(2)}`,
+          `Target $${takeProfit.toFixed(2)} · stop $${stopLoss.toFixed(2)} · ${snap.note}`,
+          { tags: "chart_with_upwards_trend" }
         );
       } catch (err) {
         this.state.lastError =

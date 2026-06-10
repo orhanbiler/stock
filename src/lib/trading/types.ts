@@ -93,6 +93,7 @@ export interface BotState {
 
 export interface DebugInfo {
   keysDetected: boolean;
+  pushConfigured: boolean;
   endpoint: string;
   dataFeed: string;
   tickCount: number;
