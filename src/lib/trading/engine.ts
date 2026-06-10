@@ -129,6 +129,14 @@ class TradingEngine {
       log: persisted?.log ?? [],
       equityCurve: persisted?.equityCurve ?? [],
     };
+
+    // Opt-in for always-on hosts: resume trading automatically after a
+    // process restart or deploy instead of waiting for a human to press
+    // Start. Leave unset on serverless.
+    if (process.env.BOT_AUTO_START === "true") {
+      this.trace("BOT_AUTO_START=true — starting bot on boot");
+      this.start();
+    }
   }
 
   private trace(msg: string) {
@@ -144,6 +152,14 @@ class TradingEngine {
 
   getConfig(): RiskConfig {
     return this.config;
+  }
+
+  getMode(): string {
+    return this.broker.mode;
+  }
+
+  isRunning(): boolean {
+    return this.state.running;
   }
 
   getSymbols(): string[] {

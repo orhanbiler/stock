@@ -89,3 +89,44 @@ State (trade log, equity curve, daily counters) persists to `.data/`
 Educational software, not financial advice. Day trading involves substantial
 risk of loss. Past performance — simulated or real — does not guarantee
 future results.
+
+## Always-on deployment (Railway / Fly.io / Docker)
+
+Vercel is serverless — the bot only ticks while the dashboard is open or an
+external pinger hits `/api/status`. For true set-and-forget autonomy, run it
+as a persistent process; the engine's built-in 20-second loop then trades on
+its own all session.
+
+### Railway (recommended, ~$5/mo)
+
+1. https://railway.app → **New Project → Deploy from GitHub repo** → pick
+   this repo (it auto-detects the `Dockerfile`).
+2. In **Variables**, add:
+   - `ALPACA_KEY_ID` / `ALPACA_SECRET_KEY`
+   - `BOT_AUTO_START=true` — resume trading automatically after restarts
+     and deploys (otherwise press **Start bot** once per deploy)
+3. In **Settings → Networking**, generate a domain. Optional: set the
+   health check path to `/api/health`.
+4. Optional but recommended: attach a **Volume** mounted at `/app/.data`
+   so the trade log and equity history survive deploys.
+
+### Fly.io
+
+```bash
+fly launch --no-deploy        # accepts the Dockerfile
+fly secrets set ALPACA_KEY_ID=PK... ALPACA_SECRET_KEY=... BOT_AUTO_START=true
+fly deploy
+```
+
+### Plain Docker
+
+```bash
+docker build -t quantdesk .
+docker run -d -p 3000:3000 \
+  -e ALPACA_KEY_ID=PK... -e ALPACA_SECRET_KEY=... -e BOT_AUTO_START=true \
+  -v quantdesk-data:/app/.data quantdesk
+```
+
+`/api/health` is a lightweight liveness probe (no market calls). The
+dashboard works the same wherever it runs — open it to watch, close it
+without stopping the bot.
