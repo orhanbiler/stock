@@ -109,7 +109,12 @@ export function Dashboard() {
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-5">
         <div className="space-y-4 lg:col-span-3">
-          <Watchlist watchlist={bot.watchlist} />
+          <Watchlist
+            watchlist={bot.watchlist}
+            symbols={status.symbols}
+            heldSymbols={status.positions.map((p) => p.symbol)}
+            onChanged={() => void refresh()}
+          />
           <Positions positions={status.positions} />
         </div>
         <div className="space-y-4 lg:col-span-2">

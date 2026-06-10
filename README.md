@@ -1,7 +1,8 @@
 # QuantDesk — a risk-first intraday trading bot
 
 A day-trading dashboard for **highly liquid US large caps** (SPY, QQQ, AAPL,
-MSFT, NVDA, AMZN, GOOGL, META), built with Next.js and shadcn/ui. The design
+MSFT, NVDA, AMZN, GOOGL, META, TSLA, AMD, INTC, RKLB, NFLX, AVGO, PLTR, MU —
+editable in the UI, up to 20 symbols), built with Next.js and shadcn/ui. The design
 goal is consistency through discipline: a simple quantitative edge wrapped in
 hard, non-negotiable risk controls.
 

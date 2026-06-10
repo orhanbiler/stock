@@ -3,13 +3,14 @@ import {
   BARS_LOOKBACK_MINUTES,
   clampRiskConfig,
   DEFAULT_RISK_CONFIG,
+  DEFAULT_SYMBOLS,
   ENTRY_END_MINUTES,
   ENTRY_START_MINUTES,
   FLATTEN_MINUTES,
   MAX_EQUITY_POINTS,
   MAX_LOG_ENTRIES,
+  sanitizeSymbols,
   SYMBOL_COOLDOWN_MINUTES,
-  SYMBOLS,
   TICK_INTERVAL_MS,
 } from "./config";
 import { SimBroker } from "./sim";
@@ -30,6 +31,7 @@ const MAX_TRACE_LINES = 150;
 
 const STATE_FILE = "bot-state.json";
 const CONFIG_FILE = "risk-config.json";
+const WATCHLIST_FILE = "watchlist.json";
 
 interface PersistedState {
   dayKey: string;
@@ -83,6 +85,7 @@ class TradingEngine {
   private keysDetected: boolean;
   private endpoint: string;
   private dataFeed: string;
+  private symbols: string[];
 
   constructor() {
     const creds = getAlpacaCreds();
@@ -103,6 +106,10 @@ class TradingEngine {
     this.config = clampRiskConfig(
       readJson<RiskConfig>(CONFIG_FILE) ?? DEFAULT_RISK_CONFIG
     );
+    this.symbols =
+      sanitizeSymbols(readJson<string[]>(WATCHLIST_FILE)) ?? [
+        ...DEFAULT_SYMBOLS,
+      ];
 
     const persisted = readJson<PersistedState>(STATE_FILE);
     const { dayKey } = etParts();
@@ -137,6 +144,25 @@ class TradingEngine {
 
   getConfig(): RiskConfig {
     return this.config;
+  }
+
+  getSymbols(): string[] {
+    return [...this.symbols];
+  }
+
+  /** Replace the watchlist. Returns the cleaned list, or null if invalid. */
+  setSymbols(input: unknown): string[] | null {
+    const cleaned = sanitizeSymbols(input);
+    if (!cleaned) return null;
+    this.symbols = cleaned;
+    writeJson(WATCHLIST_FILE, cleaned);
+    this.trace(`watchlist updated: ${cleaned.join(", ")}`);
+    // Drop stale snapshots so the UI reflects the new list immediately.
+    this.state.watchlist = this.state.watchlist.filter((w) =>
+      cleaned.includes(w.symbol)
+    );
+    this.state.lastTick = null; // force a fresh scan on next status call
+    return [...cleaned];
   }
 
   setConfig(next: RiskConfig): RiskConfig {
@@ -176,8 +202,12 @@ class TradingEngine {
     this.persist();
   }
 
-  /** Refresh on demand for the dashboard, even while the bot is stopped. */
-  async tickIfStale(maxAgeMs = 5_000): Promise<void> {
+  /**
+   * Refresh on demand for the dashboard, even while the bot is stopped.
+   * 8s staleness keeps ~16 symbols comfortably under Alpaca's data-API
+   * rate limit (200 req/min).
+   */
+  async tickIfStale(maxAgeMs = 8_000): Promise<void> {
     if (this.state.lastTick && Date.now() - this.state.lastTick < maxAgeMs) {
       return;
     }
@@ -199,7 +229,7 @@ class TradingEngine {
       account: this.account,
       positions: this.positions,
       bot: this.state,
-      symbols: [...SYMBOLS],
+      symbols: [...this.symbols],
       config: this.config,
       debug,
     };
@@ -330,7 +360,7 @@ class TradingEngine {
 
   private async refreshWatchlist() {
     const snapshots = await Promise.all(
-      SYMBOLS.map(async (symbol) => {
+      this.symbols.map(async (symbol) => {
         try {
           const bars = await this.broker.getBars(
             symbol,

@@ -1,4 +1,3 @@
-import { SYMBOLS } from "./config";
 import type {
   AccountInfo,
   Bar,
@@ -23,7 +22,24 @@ const BASE_PRICES: Record<string, number> = {
   AMZN: 181.2,
   GOOGL: 166.7,
   META: 482.6,
+  TSLA: 332.4,
+  AMD: 164.2,
+  INTC: 31.6,
+  RKLB: 27.8,
+  NFLX: 678.5,
+  AVGO: 173.9,
+  PLTR: 84.3,
+  MU: 128.7,
 };
+
+/** Stable pseudo-price for symbols without a listed base. */
+function basePriceFor(symbol: string): number {
+  const listed = BASE_PRICES[symbol];
+  if (listed) return listed;
+  let h = 0;
+  for (const ch of symbol) h = (h * 31 + ch.charCodeAt(0)) % 9973;
+  return 25 + (h % 475);
+}
 
 const STARTING_CASH = 100_000;
 const MAX_BARS = 390;
@@ -52,20 +68,25 @@ export class SimBroker implements Broker {
   private lastMinute: number;
 
   constructor() {
-    const now = this.minuteFloor(Date.now());
-    this.lastMinute = now;
-    for (const symbol of SYMBOLS) {
-      const base = BASE_PRICES[symbol] ?? 100;
-      const bars: Bar[] = [];
-      let price = base;
-      for (let i = MAX_BARS - 60; i > 0; i--) {
-        const bar = this.nextBar(symbol, price, base, now - i * 60_000);
-        bars.push(bar);
-        price = bar.c;
-      }
-      this.sims.set(symbol, { bars, anchor: base, shockUntil: 0 });
-    }
+    this.lastMinute = this.minuteFloor(Date.now());
     this.rollDayIfNeeded();
+  }
+
+  /** Symbols are simulated lazily so the watchlist can change at runtime. */
+  private ensureSymbol(symbol: string): SymbolSim {
+    let sim = this.sims.get(symbol);
+    if (sim) return sim;
+    const base = basePriceFor(symbol);
+    const bars: Bar[] = [];
+    let price = base;
+    for (let i = MAX_BARS - 60; i > 0; i--) {
+      const bar = this.nextBar(symbol, price, base, this.lastMinute - i * 60_000);
+      bars.push(bar);
+      price = bar.c;
+    }
+    sim = { bars, anchor: base, shockUntil: 0 };
+    this.sims.set(symbol, sim);
+    return sim;
   }
 
   private minuteFloor(t: number): number {
@@ -190,6 +211,7 @@ export class SimBroker implements Broker {
   }
 
   async getBars(symbol: string): Promise<Bar[]> {
+    this.ensureSymbol(symbol);
     this.advance();
     return this.sims.get(symbol)?.bars.slice() ?? [];
   }

@@ -1,10 +1,11 @@
 import type { RiskConfig } from "./types";
 
 /**
- * Universe: only deeply liquid, penny-spread mega-cap stocks and index ETFs.
- * Liquidity is the first risk control — exits fill instantly at fair prices.
+ * Default universe: deeply liquid, penny-spread large caps, index ETFs, and
+ * a few liquid high-beta movers. Liquidity is the first risk control —
+ * exits fill instantly at fair prices. Editable in the UI (see watchlist).
  */
-export const SYMBOLS = [
+export const DEFAULT_SYMBOLS = [
   "SPY",
   "QQQ",
   "AAPL",
@@ -13,7 +14,30 @@ export const SYMBOLS = [
   "AMZN",
   "GOOGL",
   "META",
+  "TSLA",
+  "AMD",
+  "INTC",
+  "RKLB",
+  "NFLX",
+  "AVGO",
+  "PLTR",
+  "MU",
 ] as const;
+
+export const MAX_WATCHLIST_SYMBOLS = 20;
+
+/** Uppercase, dedupe, validate tickers; clamp list size. */
+export function sanitizeSymbols(input: unknown): string[] | null {
+  if (!Array.isArray(input)) return null;
+  const seen = new Set<string>();
+  for (const raw of input) {
+    if (typeof raw !== "string") continue;
+    const s = raw.trim().toUpperCase();
+    if (/^[A-Z][A-Z.]{0,5}$/.test(s)) seen.add(s);
+    if (seen.size >= MAX_WATCHLIST_SYMBOLS) break;
+  }
+  return seen.size > 0 ? Array.from(seen) : null;
+}
 
 export const DEFAULT_RISK_CONFIG: RiskConfig = {
   riskPerTradePct: 0.5,
