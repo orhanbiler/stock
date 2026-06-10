@@ -13,6 +13,10 @@ interface AlpacaCreds {
   live: boolean;
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export function getAlpacaCreds(): AlpacaCreds | null {
   const keyId = process.env.ALPACA_KEY_ID;
   const secretKey = process.env.ALPACA_SECRET_KEY;
@@ -40,19 +44,61 @@ export class AlpacaBroker implements Broker {
     };
   }
 
+  /**
+   * Serverless → Alpaca connections occasionally die mid-flight ("fetch
+   * failed") or hit transient 5xx/429s. Retry briefly before surfacing.
+   */
+  private async fetchWithRetry(
+    base: string,
+    path: string,
+    init?: RequestInit
+  ): Promise<Response> {
+    const shortPath = path.split("?")[0];
+    let lastErr = "";
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      let res: Response;
+      try {
+        res = await fetch(`${base}${path}`, {
+          ...init,
+          headers: { ...this.headers, ...(init?.headers ?? {}) },
+          cache: "no-store",
+        });
+      } catch (err) {
+        lastErr = err instanceof Error ? err.message : String(err);
+        if (attempt < 3) {
+          await sleep(attempt * 400);
+          continue;
+        }
+        throw new Error(
+          `Alpaca ${shortPath}: network error after ${attempt} attempts (${lastErr})`
+        );
+      }
+      if (res.status >= 500 || res.status === 429) {
+        if (attempt < 3) {
+          await sleep(attempt * 600);
+          continue;
+        }
+        const body = await res.text().catch(() => "");
+        throw new Error(
+          `Alpaca ${shortPath} failed (${res.status}: ${body.slice(0, 200)})`
+        );
+      }
+      return res;
+    }
+    throw new Error(`Alpaca ${shortPath} failed (${lastErr})`);
+  }
+
   private async request<T>(
     base: string,
     path: string,
     init?: RequestInit
   ): Promise<T> {
-    const res = await fetch(`${base}${path}`, {
-      ...init,
-      headers: { ...this.headers, ...(init?.headers ?? {}) },
-      cache: "no-store",
-    });
+    const res = await this.fetchWithRetry(base, path, init);
     if (!res.ok) {
       const body = await res.text().catch(() => "");
-      throw new Error(`Alpaca ${path} failed (${res.status}): ${body}`);
+      throw new Error(
+        `Alpaca ${path.split("?")[0]} failed (${res.status}): ${body.slice(0, 200)}`
+      );
     }
     return res.json() as Promise<T>;
   }
@@ -140,9 +186,14 @@ export class AlpacaBroker implements Broker {
   }
 
   async submitBracketBuy(req: BracketOrderRequest): Promise<void> {
+    // Deterministic per symbol+minute: if a retry re-sends an order that
+    // actually reached Alpaca, the duplicate client_order_id is rejected
+    // instead of double-buying.
+    const clientOrderId = `quantdesk-${req.symbol}-${Math.floor(Date.now() / 60_000)}`;
     await this.request(this.tradingBase, "/v2/orders", {
       method: "POST",
       body: JSON.stringify({
+        client_order_id: clientOrderId,
         symbol: req.symbol,
         qty: String(req.qty),
         side: "buy",
@@ -156,9 +207,10 @@ export class AlpacaBroker implements Broker {
   }
 
   async closePosition(symbol: string): Promise<void> {
-    const res = await fetch(
-      `${this.tradingBase}/v2/positions/${symbol}?cancel_orders=true`,
-      { method: "DELETE", headers: this.headers, cache: "no-store" }
+    const res = await this.fetchWithRetry(
+      this.tradingBase,
+      `/v2/positions/${symbol}?cancel_orders=true`,
+      { method: "DELETE" }
     );
     if (!res.ok && res.status !== 404) {
       throw new Error(`Alpaca close ${symbol} failed (${res.status})`);
@@ -166,9 +218,10 @@ export class AlpacaBroker implements Broker {
   }
 
   async closeAllPositions(): Promise<void> {
-    const res = await fetch(
-      `${this.tradingBase}/v2/positions?cancel_orders=true`,
-      { method: "DELETE", headers: this.headers, cache: "no-store" }
+    const res = await this.fetchWithRetry(
+      this.tradingBase,
+      `/v2/positions?cancel_orders=true`,
+      { method: "DELETE" }
     );
     if (!res.ok && res.status !== 404) {
       throw new Error(`Alpaca close-all failed (${res.status})`);
