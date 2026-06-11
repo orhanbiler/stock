@@ -1,5 +1,15 @@
+import { MIN_STOP_PCT } from "./config";
 import { atr, rsi, sma, vwap } from "./indicators";
 import type { Bar, RiskConfig, SymbolSnapshot } from "./types";
+
+/** Stop distance: ATR-scaled with an absolute floor — never a penny stop. */
+export function stopDistanceFor(
+  price: number,
+  atrValue: number,
+  cfg: RiskConfig
+): number {
+  return Math.max(cfg.stopAtrMultiple * atrValue, price * MIN_STOP_PCT);
+}
 
 /**
  * VWAP mean-reversion, long only.
@@ -79,9 +89,19 @@ export function evaluateSymbol(
     };
   }
 
-  const stop = price - cfg.stopAtrMultiple * atr14;
+  // Wait for the turn: never buy while the knife is still falling. The
+  // latest bar must close up before we step in.
+  const lastBar = bars[bars.length - 1];
+  if (lastBar.c <= lastBar.o) {
+    return {
+      ...base,
+      signal: "none" as const,
+      note: `Oversold ${deviationAtr.toFixed(2)} ATR — waiting for an up bar`,
+    };
+  }
+
+  const risk = stopDistanceFor(price, atr14, cfg);
   const reward = sessionVwap - price;
-  const risk = price - stop;
   if (risk <= 0 || reward / risk < cfg.minRewardRisk) {
     return {
       ...base,

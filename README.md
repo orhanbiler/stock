@@ -45,10 +45,13 @@ stay off until you have a long, audited paper track record.
    first risk control — exits fill instantly near fair value.
 2. **Setup**: price stretched ≥ 1.5 ATRs *below* session VWAP **and**
    RSI(2) oversold (≤ 10). In deep names these flushes tend to revert.
-3. **Entry**: market buy via a **bracket order** — take-profit at VWAP,
-   stop-loss 1 ATR below. The exit is defined before the trade exists.
-4. **Regime filter**: longs disabled when price trends hard below its
-   2-hour average — trend-down days are not dislocations.
+3. **Entry**: only after the latest bar closes up (never buy a falling
+   knife mid-flush), via a **bracket order** — take-profit at VWAP,
+   stop-loss 2.5 ATRs below (with an absolute floor). The exit is defined
+   before the trade exists.
+4. **Regime filters**: longs disabled when a name trends hard below its
+   2-hour average, and no entries at all while SPY itself is 1.5+ ATRs
+   below its VWAP — market-wide flushes are correlated knives.
 5. **Timing**: entries only 9:45–15:30 ET (skip the open chaos and the
    closing ramp). Everything is flattened at 15:55 ET — never hold overnight.
 

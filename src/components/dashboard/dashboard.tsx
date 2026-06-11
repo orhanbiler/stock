@@ -156,15 +156,15 @@ function StrategyExplainer() {
   const items = [
     {
       title: "The edge",
-      body: "Deeply liquid large caps that get knocked 1.5+ ATRs below session VWAP on a short-term flush (RSI(2) oversold) tend to snap back toward VWAP. The bot buys that dislocation and sells the reversion.",
+      body: "Deeply liquid large caps that get knocked 1.5+ ATRs below session VWAP on a short-term flush (RSI(2) oversold) tend to snap back toward VWAP. The bot waits for the first up bar — never buying a knife mid-fall — then buys the dislocation and sells the reversion.",
     },
     {
       title: "Defined exits, always",
-      body: "Every entry is a bracket order: take-profit at VWAP, stop-loss one ATR below entry. The exit exists before the trade does — no decisions made under pressure.",
+      body: "Every entry is a bracket order: take-profit at VWAP, stop-loss 2.5 ATRs below entry with an absolute floor. Wider stops don't add risk — sizing divides the dollar risk budget by stop distance, so the bot simply buys fewer shares with room to breathe.",
     },
     {
-      title: "Regime filter",
-      body: "If price is trending hard below its 2-hour average, longs are disabled. Trend-down days are not dislocations, and we do not catch falling knives.",
+      title: "Regime filters",
+      body: "Two layers: no longs in a name trending hard below its 2-hour average, and no new entries at all while SPY itself sits 1.5+ ATRs below its VWAP — a market-wide flush is correlated knives, not a dislocation.",
     },
     {
       title: "Capital protection",

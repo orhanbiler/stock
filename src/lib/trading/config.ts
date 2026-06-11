@@ -47,10 +47,22 @@ export const DEFAULT_RISK_CONFIG: RiskConfig = {
   dailyLossLimitPct: 2,
   entryDeviationAtr: 1.5,
   rsiEntryMax: 10,
-  stopAtrMultiple: 1.0,
-  minRewardRisk: 1.2,
+  // 1-minute ATR is noise-level; stops need real room. Sizing divides the
+  // dollar risk budget by stop distance, so wider stops mean fewer shares,
+  // not more risk.
+  stopAtrMultiple: 2.5,
+  // Mean reversion is a high-win-rate / inverted-RR profile: target (VWAP)
+  // is nearer than the stop. Demanding trend-style RR here starves it.
+  minRewardRisk: 0.6,
   maxConsecutiveLosses: 3,
 };
+
+/** Floor on stop distance as a fraction of price — never penny stops. */
+export const MIN_STOP_PCT = 0.003;
+
+/** No new longs while SPY itself is this far below its VWAP (ATRs):
+ *  a market-wide flush is correlated knives, not a dislocation. */
+export const MARKET_GATE_DEVIATION_ATR = -1.5;
 
 /** Hard cap on entries per symbol per day — never feed a falling knife. */
 export const MAX_SYMBOL_ENTRIES_PER_DAY = 2;
@@ -81,8 +93,8 @@ export function clampRiskConfig(c: RiskConfig): RiskConfig {
     dailyLossLimitPct: clamp(c.dailyLossLimitPct, 0.5, 5, d.dailyLossLimitPct),
     entryDeviationAtr: clamp(c.entryDeviationAtr, 0.5, 4, d.entryDeviationAtr),
     rsiEntryMax: clamp(c.rsiEntryMax, 1, 40, d.rsiEntryMax),
-    stopAtrMultiple: clamp(c.stopAtrMultiple, 0.5, 3, d.stopAtrMultiple),
-    minRewardRisk: clamp(c.minRewardRisk, 0.5, 5, d.minRewardRisk),
+    stopAtrMultiple: clamp(c.stopAtrMultiple, 1, 4, d.stopAtrMultiple),
+    minRewardRisk: clamp(c.minRewardRisk, 0.3, 5, d.minRewardRisk),
     maxConsecutiveLosses: Math.round(
       clamp(c.maxConsecutiveLosses, 2, 10, d.maxConsecutiveLosses)
     ),

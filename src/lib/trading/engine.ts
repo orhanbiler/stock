@@ -7,6 +7,7 @@ import {
   ENTRY_END_MINUTES,
   ENTRY_START_MINUTES,
   FLATTEN_MINUTES,
+  MARKET_GATE_DEVIATION_ATR,
   MAX_EQUITY_POINTS,
   MAX_LOG_ENTRIES,
   MAX_SYMBOL_ENTRIES_PER_DAY,
@@ -18,7 +19,12 @@ import { TradeJournal } from "./journal";
 import { SimBroker } from "./sim";
 import { pushConfigured, sendPush } from "./notify";
 import { readJson, writeJson } from "./store";
-import { evaluateSymbol, round2, targetFor } from "./strategy";
+import {
+  evaluateSymbol,
+  round2,
+  stopDistanceFor,
+  targetFor,
+} from "./strategy";
 import type {
   AccountInfo,
   BotState,
@@ -35,7 +41,9 @@ import type {
 const MAX_TRACE_LINES = 150;
 
 const STATE_FILE = "bot-state.json";
-const CONFIG_FILE = "risk-config.json";
+// v2: stop-placement retune (wider ATR stops, reversion-profile RR).
+// New name so stale persisted configs don't carry the old tuning forward.
+const CONFIG_FILE = "risk-config-v2.json";
 const WATCHLIST_FILE = "watchlist.json";
 
 interface PersistedState {
@@ -95,6 +103,8 @@ class TradingEngine {
   /** Set when the engine itself closes everything, so the next exit
    *  detection can attribute the reason correctly. */
   private pendingExitReason: ExitReason | null = null;
+  /** SPY's deviation from its VWAP (ATRs) — the market-wide health gauge. */
+  private marketDeviationAtr = 0;
 
   constructor() {
     const creds = getAlpacaCreds();
@@ -464,6 +474,19 @@ class TradingEngine {
       })
     );
     this.state.watchlist = snapshots;
+
+    // Market gate gauge: use SPY from the watchlist, or fetch it separately
+    // if the user removed it. Fail open (0) rather than blocking on error.
+    let market = snapshots.find((s) => s.symbol === "SPY" && s.atr > 0);
+    if (!market) {
+      try {
+        const bars = await this.broker.getBars("SPY", BARS_LOOKBACK_MINUTES);
+        market = evaluateSymbol("SPY", bars, this.config);
+      } catch {
+        market = undefined;
+      }
+    }
+    this.marketDeviationAtr = market && market.atr > 0 ? market.deviationAtr : 0;
   }
 
   private entriesAllowed(): string | null {
@@ -477,6 +500,9 @@ class TradingEngine {
     }
     if (this.state.tradesToday >= this.config.maxTradesPerDay) {
       return "Daily trade cap reached";
+    }
+    if (this.marketDeviationAtr <= MARKET_GATE_DEVIATION_ATR) {
+      return `Market-wide selloff (SPY ${this.marketDeviationAtr.toFixed(1)} ATR below VWAP) — standing aside`;
     }
     return null;
   }
@@ -517,7 +543,7 @@ class TradingEngine {
       }
 
       const stopLoss = round2(
-        snap.price - this.config.stopAtrMultiple * snap.atr
+        snap.price - stopDistanceFor(snap.price, snap.atr, this.config)
       );
       const takeProfit = targetFor(snap.price, snap.vwap, snap.atr);
       const riskPerShare = snap.price - stopLoss;
