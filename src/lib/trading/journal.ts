@@ -127,11 +127,75 @@ export class TradeJournal {
       });
       added += 1;
     }
+    // Unmatched buys are positions still open — record them as open trades
+    // so their eventual exit gets journaled instead of lost.
+    for (const [symbol, lot] of openLots) {
+      this.trades.push({
+        id: `bf-${lot.time}-${symbol}`,
+        mode,
+        dayKey: etDayKey(lot.time),
+        symbol,
+        qty: lot.qty,
+        entryTime: lot.time,
+        entryPrice: round2(lot.price),
+        takeProfit: 0,
+        stopLoss: 0,
+        deviationAtr: 0,
+        rsi2: 0,
+        status: "open",
+        backfilled: true,
+      });
+      added += 1;
+    }
     if (added > 0) {
       this.trades.sort((a, b) => a.entryTime - b.entryTime);
       this.persist();
     }
     return added;
+  }
+
+  /** Last-resort record for an exit whose entry was never journaled. */
+  recordOrphanExit(args: {
+    mode: BotMode;
+    symbol: string;
+    qty: number;
+    entryPrice: number;
+    exitPrice: number;
+    exitTime: number;
+    exitReason: ExitReason;
+  }): JournalTrade {
+    const pnl = round2((args.exitPrice - args.entryPrice) * args.qty);
+    const trade: JournalTrade = {
+      id: `orphan-${args.exitTime}-${args.symbol}`,
+      mode: args.mode,
+      dayKey: etDayKey(args.exitTime),
+      symbol: args.symbol,
+      qty: args.qty,
+      entryTime: args.exitTime,
+      entryPrice: round2(args.entryPrice),
+      takeProfit: 0,
+      stopLoss: 0,
+      deviationAtr: 0,
+      rsi2: 0,
+      status: "closed",
+      exitTime: args.exitTime,
+      exitPrice: round2(args.exitPrice),
+      exitReason: args.exitReason,
+      pnl,
+      pnlPct:
+        args.entryPrice > 0
+          ? round2(((args.exitPrice - args.entryPrice) / args.entryPrice) * 100)
+          : 0,
+      backfilled: true,
+    };
+    this.trades.push(trade);
+    this.persist();
+    return trade;
+  }
+
+  /** All entries opened on a given day, regardless of status. */
+  entriesOnDay(dayKey: string): number {
+    return this.trades.filter((t) => t.dayKey === dayKey).length;
   }
 
   /** Entries opened for a symbol on a given day (open or closed). */

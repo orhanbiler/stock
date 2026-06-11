@@ -332,6 +332,16 @@ class TradingEngine {
           `journal backfilled: ${added} trade(s) rebuilt from broker order history`
         );
       }
+      // Restore today's counters and brakes from the durable record, so a
+      // redeploy can never reset the daily caps or an active loss streak.
+      const journaledToday = this.journal.entriesOnDay(this.dayKey);
+      if (journaledToday > this.state.tradesToday) {
+        this.state.tradesToday = journaledToday;
+        this.trace(
+          `trade counter restored from journal: ${journaledToday} entries today`
+        );
+      }
+      this.enforceLossStreakBrake();
     } catch (err) {
       this.backfillDone = false; // retry next tick
       this.trace(
@@ -388,7 +398,20 @@ class TradingEngine {
       const reason: ExitReason =
         flattenReason ?? (pnl >= 0 ? "target" : "stop");
 
-      this.journal.close(symbol, exitPrice, exitTime, reason);
+      const journaled = this.journal.close(symbol, exitPrice, exitTime, reason);
+      if (!journaled) {
+        // Entry predates this journal (e.g. opened by a previous deploy and
+        // backfill ran after) — never drop a real exit.
+        this.journal.recordOrphanExit({
+          mode: this.broker.mode,
+          symbol,
+          qty: prev.qty,
+          entryPrice: prev.avgEntry,
+          exitPrice,
+          exitTime,
+          exitReason: reason,
+        });
+      }
       this.state.realizedPnlToday = round2(
         this.state.realizedPnlToday + pnl
       );
