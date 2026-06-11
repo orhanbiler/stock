@@ -1,8 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { ClipboardCopy, Download } from "lucide-react";
+import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   Table,
   TableBody,
@@ -63,6 +66,40 @@ function when(t: number): string {
   });
 }
 
+/** Compact plain-text report, made to be pasted into a chat for analysis. */
+function buildReport(journal: JournalPayload): string {
+  const { stats, trades } = journal;
+  const f = (n: number | null | undefined, digits = 2) =>
+    n === null || n === undefined ? "—" : n.toFixed(digits);
+  const lines: string[] = [];
+  lines.push(`QUANTDESK JOURNAL EXPORT — ${new Date().toISOString().slice(0, 16)}Z`);
+  lines.push(
+    `stats: trades=${stats.totalTrades} (${stats.openTrades} open) | win=${stats.wins} loss=${stats.losses} (${f(stats.winRate, 0)}%) | ` +
+      `pnl=$${f(stats.totalPnl)} | pf=${f(stats.profitFactor)} | avgWin=$${f(stats.avgWin)} avgLoss=$${f(stats.avgLoss)} | ` +
+      `best=$${f(stats.bestTrade)} worst=$${f(stats.worstTrade)} | avgHold=${stats.avgHoldMinutes ?? "—"}m`
+  );
+  lines.push("");
+  lines.push("by day:");
+  for (const d of stats.days) {
+    lines.push(`  ${d.dayKey}  pnl=$${d.pnl.toFixed(2)}  ${d.wins}W/${d.losses}L`);
+  }
+  lines.push("");
+  lines.push(
+    "trades (newest first): closed | symbol | qty | entry->exit | pnl | hold | setup(devATR/RSI2) | exit-via | mode"
+  );
+  for (const t of trades) {
+    const closed = t.exitTime
+      ? new Date(t.exitTime).toISOString().slice(0, 16)
+      : "open";
+    lines.push(
+      `  ${closed} | ${t.symbol} | ${t.qty} | ${t.entryPrice}->${t.exitPrice ?? "?"} | ` +
+        `${t.pnl !== undefined ? `$${t.pnl.toFixed(2)} (${t.pnlPct?.toFixed(2)}%)` : "open"} | ` +
+        `${t.holdMinutes ?? "?"}m | ${t.deviationAtr.toFixed(2)}/${t.rsi2.toFixed(0)} | ${t.exitReason ?? "open"} | ${t.mode}`
+    );
+  }
+  return lines.join("\n");
+}
+
 export function JournalPanel() {
   const [journal, setJournal] = useState<JournalPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -105,8 +142,39 @@ export function JournalPanel() {
   const pnlTone = (n: number | null) =>
     n === null ? undefined : n >= 0 ? "gain" : "loss";
 
+  async function copyReport() {
+    try {
+      await navigator.clipboard.writeText(buildReport(journal!));
+      toast.success("Journal report copied", {
+        description: "Paste it into the chat for analysis.",
+      });
+    } catch {
+      toast.error("Clipboard unavailable — use Download instead");
+    }
+  }
+
+  function downloadJson() {
+    const blob = new Blob([JSON.stringify(journal, null, 2)], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `quantdesk-journal-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   return (
     <div className="space-y-4">
+      <div className="flex justify-end gap-2">
+        <Button variant="secondary" size="sm" onClick={copyReport}>
+          <ClipboardCopy /> Copy report
+        </Button>
+        <Button variant="outline" size="sm" onClick={downloadJson}>
+          <Download /> JSON
+        </Button>
+      </div>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 xl:grid-cols-8">
         <StatBox
           label="Total P&L"
