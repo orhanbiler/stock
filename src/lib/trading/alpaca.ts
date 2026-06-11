@@ -4,6 +4,7 @@ import type {
   BotMode,
   BracketOrderRequest,
   Broker,
+  BrokerFill,
   Position,
 } from "./types";
 
@@ -230,6 +231,39 @@ export class AlpacaBroker implements Broker {
       price: parseFloat(fill.filled_avg_price as string),
       time: Date.parse(fill.filled_at as string),
     };
+  }
+
+  async getClosedFills(afterIso: string): Promise<BrokerFill[]> {
+    const params = new URLSearchParams({
+      status: "closed",
+      limit: "500",
+      after: afterIso,
+      direction: "asc",
+    });
+    const orders = await this.request<
+      Array<{
+        symbol: string;
+        side: string;
+        filled_qty: string | null;
+        filled_avg_price: string | null;
+        filled_at: string | null;
+      }>
+    >(this.tradingBase, `/v2/orders?${params}`);
+    return orders
+      .filter(
+        (o) =>
+          o.filled_at &&
+          o.filled_avg_price &&
+          parseFloat(o.filled_qty ?? "0") > 0 &&
+          (o.side === "buy" || o.side === "sell")
+      )
+      .map((o) => ({
+        symbol: o.symbol,
+        side: o.side as "buy" | "sell",
+        qty: parseFloat(o.filled_qty as string),
+        price: parseFloat(o.filled_avg_price as string),
+        time: Date.parse(o.filled_at as string),
+      }));
   }
 
   async closePosition(symbol: string): Promise<void> {

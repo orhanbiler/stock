@@ -93,6 +93,16 @@ export interface JournalTrade {
   pnl?: number;
   pnlPct?: number;
   holdMinutes?: number;
+  /** Reconstructed from broker order history — no setup context. */
+  backfilled?: boolean;
+}
+
+export interface BrokerFill {
+  symbol: string;
+  side: "buy" | "sell";
+  qty: number;
+  price: number;
+  time: number;
 }
 
 export interface JournalDay {
@@ -177,4 +187,6 @@ export interface Broker {
   getLastExitFill(
     symbol: string
   ): Promise<{ price: number; time: number } | null>;
+  /** All filled orders since the given time, oldest first. */
+  getClosedFills(afterIso: string): Promise<BrokerFill[]>;
 }

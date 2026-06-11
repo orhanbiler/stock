@@ -262,6 +262,10 @@ export class SimBroker implements Broker {
     return this.lastExitFills.get(symbol) ?? null;
   }
 
+  async getClosedFills(): Promise<never[]> {
+    return []; // the simulator has no durable order history
+  }
+
   async closeAllPositions(): Promise<void> {
     this.advance();
     for (const symbol of Array.from(this.positions.keys())) {

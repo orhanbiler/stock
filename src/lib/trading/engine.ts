@@ -105,6 +105,7 @@ class TradingEngine {
   private pendingExitReason: ExitReason | null = null;
   /** SPY's deviation from its VWAP (ATRs) — the market-wide health gauge. */
   private marketDeviationAtr = 0;
+  private backfillDone = false;
 
   constructor() {
     const creds = getAlpacaCreds();
@@ -283,6 +284,7 @@ class TradingEngine {
     this.tickCount += 1;
     try {
       this.rollDayIfNeeded();
+      await this.backfillJournalIfNeeded();
       this.state.marketOpen = await this.broker.isMarketOpen();
       await this.refreshPortfolio();
       await this.detectExits();
@@ -312,6 +314,29 @@ class TradingEngine {
       this.state.lastTick = Date.now();
       this.persist();
       this.ticking = false;
+    }
+  }
+
+  /** After a redeploy wipes .data, rebuild the journal from the broker's
+   *  durable order history (last 14 days) so no trade record is lost. */
+  private async backfillJournalIfNeeded() {
+    if (this.backfillDone) return;
+    this.backfillDone = true;
+    if (this.broker.mode === "demo" || !this.journal.isEmpty()) return;
+    try {
+      const after = new Date(Date.now() - 14 * 86_400_000).toISOString();
+      const fills = await this.broker.getClosedFills(after);
+      const added = this.journal.backfill(fills, this.broker.mode);
+      if (added > 0) {
+        this.trace(
+          `journal backfilled: ${added} trade(s) rebuilt from broker order history`
+        );
+      }
+    } catch (err) {
+      this.backfillDone = false; // retry next tick
+      this.trace(
+        `journal backfill failed (will retry): ${err instanceof Error ? err.message : err}`
+      );
     }
   }
 

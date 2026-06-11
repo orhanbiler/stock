@@ -91,10 +91,13 @@ function buildReport(journal: JournalPayload): string {
     const closed = t.exitTime
       ? new Date(t.exitTime).toISOString().slice(0, 16)
       : "open";
+    const setup = t.backfilled
+      ? "backfilled"
+      : `${t.deviationAtr.toFixed(2)}/${t.rsi2.toFixed(0)}`;
     lines.push(
       `  ${closed} | ${t.symbol} | ${t.qty} | ${t.entryPrice}->${t.exitPrice ?? "?"} | ` +
         `${t.pnl !== undefined ? `$${t.pnl.toFixed(2)} (${t.pnlPct?.toFixed(2)}%)` : "open"} | ` +
-        `${t.holdMinutes ?? "?"}m | ${t.deviationAtr.toFixed(2)}/${t.rsi2.toFixed(0)} | ${t.exitReason ?? "open"} | ${t.mode}`
+        `${t.holdMinutes ?? "?"}m | ${setup} | ${t.exitReason ?? "open"} | ${t.mode}`
     );
   }
   return lines.join("\n");
@@ -330,7 +333,9 @@ export function JournalPanel() {
                     {t.holdMinutes !== undefined ? `${t.holdMinutes}m` : "—"}
                   </TableCell>
                   <TableCell className="text-muted-foreground hidden text-right text-xs tabular-nums lg:table-cell">
-                    {t.deviationAtr.toFixed(2)} ATR · RSI {t.rsi2.toFixed(0)}
+                    {t.backfilled
+                      ? "backfilled"
+                      : `${t.deviationAtr.toFixed(2)} ATR · RSI ${t.rsi2.toFixed(0)}`}
                   </TableCell>
                   <TableCell>
                     {t.exitReason ? (

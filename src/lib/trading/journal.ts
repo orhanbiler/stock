@@ -1,6 +1,8 @@
 import { readJson, writeJson } from "./store";
 import { round2 } from "./strategy";
 import type {
+  BotMode,
+  BrokerFill,
   ExitReason,
   JournalDay,
   JournalPayload,
@@ -10,6 +12,16 @@ import type {
 
 const JOURNAL_FILE = "journal.json";
 const MAX_TRADES = 1000;
+
+function etDayKey(t: number): string {
+  const fmt = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+  return fmt.format(new Date(t));
+}
 
 export class TradeJournal {
   private trades: JournalTrade[];
@@ -61,6 +73,65 @@ export class TradeJournal {
     );
     this.persist();
     return trade;
+  }
+
+  isEmpty(): boolean {
+    return this.trades.length === 0;
+  }
+
+  /**
+   * Rebuild round-trip trades from the broker's durable order history
+   * (FIFO buy→sell per symbol). Used after a redeploy wipes local state —
+   * the account itself never forgets. Backfilled trades carry exact
+   * prices, times and P&L but no setup context.
+   */
+  backfill(fills: BrokerFill[], mode: BotMode): number {
+    const openLots = new Map<
+      string,
+      { qty: number; price: number; time: number }
+    >();
+    let added = 0;
+    for (const f of [...fills].sort((a, b) => a.time - b.time)) {
+      if (f.side === "buy") {
+        openLots.set(f.symbol, { qty: f.qty, price: f.price, time: f.time });
+        continue;
+      }
+      const lot = openLots.get(f.symbol);
+      if (!lot) continue; // sell without a tracked long (e.g. old short cover)
+      openLots.delete(f.symbol);
+      const qty = Math.min(lot.qty, f.qty);
+      const pnl = round2((f.price - lot.price) * qty);
+      this.trades.push({
+        id: `bf-${lot.time}-${f.symbol}`,
+        mode,
+        dayKey: etDayKey(lot.time),
+        symbol: f.symbol,
+        qty,
+        entryTime: lot.time,
+        entryPrice: round2(lot.price),
+        takeProfit: 0,
+        stopLoss: 0,
+        deviationAtr: 0,
+        rsi2: 0,
+        status: "closed",
+        exitTime: f.time,
+        exitPrice: round2(f.price),
+        exitReason: pnl >= 0 ? "target" : "stop",
+        pnl,
+        pnlPct:
+          lot.price > 0
+            ? round2(((f.price - lot.price) / lot.price) * 100)
+            : 0,
+        holdMinutes: Math.max(0, Math.round((f.time - lot.time) / 60_000)),
+        backfilled: true,
+      });
+      added += 1;
+    }
+    if (added > 0) {
+      this.trades.sort((a, b) => a.entryTime - b.entryTime);
+      this.persist();
+    }
+    return added;
   }
 
   /** Entries opened for a symbol on a given day (open or closed). */
