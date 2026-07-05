@@ -27,7 +27,18 @@ export class TradeJournal {
   private trades: JournalTrade[];
 
   constructor() {
-    this.trades = readJson<JournalTrade[]>(JOURNAL_FILE) ?? [];
+    const loaded = readJson<JournalTrade[]>(JOURNAL_FILE) ?? [];
+    // Drop records corrupted by the historical stale-fill race: a trade
+    // cannot close before it opened.
+    this.trades = loaded.filter(
+      (t) =>
+        !(
+          t.status === "closed" &&
+          t.exitTime !== undefined &&
+          t.exitTime < t.entryTime
+        )
+    );
+    if (this.trades.length !== loaded.length) this.persist();
   }
 
   private persist() {
@@ -79,6 +90,14 @@ export class TradeJournal {
     return this.trades.length === 0;
   }
 
+  /** Entry time of the currently open trade for a symbol, if any. */
+  openEntryTime(symbol: string): number | null {
+    const trade = [...this.trades]
+      .reverse()
+      .find((t) => t.symbol === symbol && t.status === "open");
+    return trade ? trade.entryTime : null;
+  }
+
   /**
    * Rebuild round-trip trades from the broker's durable order history
    * (FIFO buy→sell per symbol). Used after a redeploy wipes local state —
@@ -88,17 +107,18 @@ export class TradeJournal {
   backfill(fills: BrokerFill[], mode: BotMode): number {
     const openLots = new Map<
       string,
-      { qty: number; price: number; time: number }
+      Array<{ qty: number; price: number; time: number }>
     >();
     let added = 0;
     for (const f of [...fills].sort((a, b) => a.time - b.time)) {
       if (f.side === "buy") {
-        openLots.set(f.symbol, { qty: f.qty, price: f.price, time: f.time });
+        const lots = openLots.get(f.symbol) ?? [];
+        lots.push({ qty: f.qty, price: f.price, time: f.time });
+        openLots.set(f.symbol, lots);
         continue;
       }
-      const lot = openLots.get(f.symbol);
+      const lot = openLots.get(f.symbol)?.shift();
       if (!lot) continue; // sell without a tracked long (e.g. old short cover)
-      openLots.delete(f.symbol);
       const qty = Math.min(lot.qty, f.qty);
       const pnl = round2((f.price - lot.price) * qty);
       this.trades.push({
@@ -129,23 +149,25 @@ export class TradeJournal {
     }
     // Unmatched buys are positions still open — record them as open trades
     // so their eventual exit gets journaled instead of lost.
-    for (const [symbol, lot] of openLots) {
-      this.trades.push({
-        id: `bf-${lot.time}-${symbol}`,
-        mode,
-        dayKey: etDayKey(lot.time),
-        symbol,
-        qty: lot.qty,
-        entryTime: lot.time,
-        entryPrice: round2(lot.price),
-        takeProfit: 0,
-        stopLoss: 0,
-        deviationAtr: 0,
-        rsi2: 0,
-        status: "open",
-        backfilled: true,
-      });
-      added += 1;
+    for (const [symbol, lots] of openLots) {
+      for (const lot of lots) {
+        this.trades.push({
+          id: `bf-${lot.time}-${symbol}`,
+          mode,
+          dayKey: etDayKey(lot.time),
+          symbol,
+          qty: lot.qty,
+          entryTime: lot.time,
+          entryPrice: round2(lot.price),
+          takeProfit: 0,
+          stopLoss: 0,
+          deviationAtr: 0,
+          rsi2: 0,
+          status: "open",
+          backfilled: true,
+        });
+        added += 1;
+      }
     }
     if (added > 0) {
       this.trades.sort((a, b) => a.entryTime - b.entryTime);

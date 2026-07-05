@@ -64,6 +64,9 @@ export const MIN_STOP_PCT = 0.003;
  *  a market-wide flush is correlated knives, not a dislocation. */
 export const MARKET_GATE_DEVIATION_ATR = -1.5;
 
+/** Skip "setups" stretched beyond this — that is a repricing, not noise. */
+export const EXTREME_DEVIATION_ATR = -10;
+
 /** Hard cap on entries per symbol per day — never feed a falling knife. */
 export const MAX_SYMBOL_ENTRIES_PER_DAY = 2;
 

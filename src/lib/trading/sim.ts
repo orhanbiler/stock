@@ -257,9 +257,11 @@ export class SimBroker implements Broker {
   }
 
   async getLastExitFill(
-    symbol: string
+    symbol: string,
+    sinceMs: number
   ): Promise<{ price: number; time: number } | null> {
-    return this.lastExitFills.get(symbol) ?? null;
+    const fill = this.lastExitFills.get(symbol);
+    return fill && fill.time >= sinceMs ? fill : null;
   }
 
   async getClosedFills(): Promise<never[]> {

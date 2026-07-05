@@ -208,13 +208,15 @@ export class AlpacaBroker implements Broker {
   }
 
   async getLastExitFill(
-    symbol: string
+    symbol: string,
+    sinceMs: number
   ): Promise<{ price: number; time: number } | null> {
     const params = new URLSearchParams({
       status: "closed",
       symbols: symbol,
       limit: "10",
       direction: "desc",
+      after: new Date(sinceMs).toISOString(),
     });
     const orders = await this.request<
       Array<{
@@ -224,7 +226,11 @@ export class AlpacaBroker implements Broker {
       }>
     >(this.tradingBase, `/v2/orders?${params}`);
     const fill = orders.find(
-      (o) => o.side === "sell" && o.filled_avg_price && o.filled_at
+      (o) =>
+        o.side === "sell" &&
+        o.filled_avg_price &&
+        o.filled_at &&
+        Date.parse(o.filled_at) >= sinceMs
     );
     if (!fill) return null;
     return {

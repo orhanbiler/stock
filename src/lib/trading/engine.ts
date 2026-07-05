@@ -389,8 +389,13 @@ class TradingEngine {
     if (vanished.length > 0) this.pendingExitReason = null;
 
     for (const [symbol, prev] of vanished) {
-      // Prefer the broker's actual fill over a bar-close estimate.
-      const fill = await this.broker.getLastExitFill(symbol).catch(() => null);
+      // Prefer the broker's actual fill — but only one newer than our entry,
+      // never a stale fill from an older trade.
+      const since =
+        this.journal.openEntryTime(symbol) ?? Date.now() - 6 * 3_600_000;
+      const fill = await this.broker
+        .getLastExitFill(symbol, since)
+        .catch(() => null);
       const snap = this.state.watchlist.find((w) => w.symbol === symbol);
       const exitPrice = fill?.price ?? snap?.price ?? prev.currentPrice;
       const exitTime = fill?.time ?? Date.now();
@@ -653,6 +658,10 @@ class TradingEngine {
           `Target $${takeProfit.toFixed(2)} · stop $${stopLoss.toFixed(2)} · ${snap.note}`,
           { tags: "chart_with_upwards_trend" }
         );
+        // One bullet per tick: simultaneous entries are correlated bets on
+        // the same market move. If the other setups are real, they will
+        // still be there in twenty seconds.
+        break;
       } catch (err) {
         this.state.lastError =
           err instanceof Error ? err.message : String(err);

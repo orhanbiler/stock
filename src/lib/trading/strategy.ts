@@ -1,6 +1,37 @@
-import { MIN_STOP_PCT } from "./config";
+import { EXTREME_DEVIATION_ATR, MIN_STOP_PCT } from "./config";
 import { atr, rsi, sma, vwap } from "./indicators";
 import type { Bar, RiskConfig, SymbolSnapshot } from "./types";
+
+const SESSION_START_MIN = 9 * 60 + 30;
+const SESSION_END_MIN = 16 * 60;
+const etTime = new Intl.DateTimeFormat("en-US", {
+  timeZone: "America/New_York",
+  hour12: false,
+  hour: "2-digit",
+  minute: "2-digit",
+});
+const etDay = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "America/New_York",
+});
+
+/**
+ * Anchor indicators to today's regular session (9:30–16:00 ET). Raw
+ * lookback bars span premarket and the prior afternoon, which skews VWAP
+ * badly on gap days. Falls back to raw bars when the session is too young
+ * (or in the 24/7 simulator) so warm-up behaves sensibly.
+ */
+export function regularSessionBars(bars: Bar[]): Bar[] {
+  if (bars.length === 0) return bars;
+  const today = etDay.format(new Date(bars[bars.length - 1].t));
+  const filtered = bars.filter((b) => {
+    const d = new Date(b.t);
+    if (etDay.format(d) !== today) return false;
+    const [h, m] = etTime.format(d).split(":").map(Number);
+    const mins = (h % 24) * 60 + m;
+    return mins >= SESSION_START_MIN && mins < SESSION_END_MIN;
+  });
+  return filtered.length >= 30 ? filtered : bars;
+}
 
 /** Stop distance: ATR-scaled with an absolute floor — never a penny stop. */
 export function stopDistanceFor(
@@ -26,10 +57,11 @@ export function stopDistanceFor(
  */
 export function evaluateSymbol(
   symbol: string,
-  bars: Bar[],
+  rawBars: Bar[],
   cfg: RiskConfig
 ): SymbolSnapshot {
   const updatedAt = Date.now();
+  const bars = regularSessionBars(rawBars);
   if (bars.length < 30) {
     return {
       symbol,
@@ -78,6 +110,16 @@ export function evaluateSymbol(
       ...base,
       signal: "none" as const,
       note: `Waiting: ${deviationAtr.toFixed(2)} ATR vs VWAP`,
+    };
+  }
+
+  // Journal evidence: entries beyond ~10 ATRs under VWAP are repricings
+  // (news), not liquidity dislocations — they kept falling.
+  if (deviationAtr <= EXTREME_DEVIATION_ATR) {
+    return {
+      ...base,
+      signal: "blocked" as const,
+      note: `Dislocation too extreme (${deviationAtr.toFixed(1)} ATR) — news, not noise`,
     };
   }
 

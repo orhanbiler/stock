@@ -183,9 +183,11 @@ export interface Broker {
   submitBracketBuy(req: BracketOrderRequest): Promise<void>;
   closePosition(symbol: string): Promise<void>;
   closeAllPositions(): Promise<void>;
-  /** Actual fill of the most recent closing (sell) order, if known. */
+  /** Actual fill of the most recent closing (sell) order AFTER sinceMs.
+   *  The time bound prevents matching a stale fill from an older trade. */
   getLastExitFill(
-    symbol: string
+    symbol: string,
+    sinceMs: number
   ): Promise<{ price: number; time: number } | null>;
   /** All filled orders since the given time, oldest first. */
   getClosedFills(afterIso: string): Promise<BrokerFill[]>;

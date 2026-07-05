@@ -66,6 +66,15 @@ function when(t: number): string {
   });
 }
 
+const etStamp = new Intl.DateTimeFormat("en-US", {
+  timeZone: "America/New_York",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+});
+
 /** Compact plain-text report, made to be pasted into a chat for analysis. */
 function buildReport(journal: JournalPayload): string {
   const { stats, trades } = journal;
@@ -85,11 +94,11 @@ function buildReport(journal: JournalPayload): string {
   }
   lines.push("");
   lines.push(
-    "trades (newest first): closed | symbol | qty | entry->exit | pnl | hold | setup(devATR/RSI2) | exit-via | mode"
+    "trades (newest first, times in ET): closed | symbol | qty | entry->exit | pnl | hold | setup(devATR/RSI2) | exit-via | mode"
   );
   for (const t of trades) {
     const closed = t.exitTime
-      ? new Date(t.exitTime).toISOString().slice(0, 16)
+      ? `${etStamp.format(new Date(t.exitTime))} ET`
       : "open";
     const setup = t.backfilled
       ? "backfilled"
