@@ -191,7 +191,7 @@ export function Watchlist({
                     <Button
                       variant="ghost"
                       size="icon"
-                      className="text-muted-foreground hover:text-loss size-7 opacity-0 transition-opacity group-hover:opacity-100"
+                      className="text-muted-foreground hover:text-loss size-7"
                       aria-label={`Remove ${snap.symbol}`}
                       disabled={busy}
                       onClick={() => remove(snap.symbol)}

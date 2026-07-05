@@ -17,7 +17,6 @@ export const DEFAULT_SYMBOLS = [
   "TSLA",
   "AMD",
   "INTC",
-  "RKLB",
   "NFLX",
   "AVGO",
   "PLTR",
